@@ -17,6 +17,7 @@ class Server:
         self.server_socket.bind(("", self.port))
         self.server_socket.listen(5)
         self.is_running = True
+        self.my_lock = threading.Lock()
         logging.info(f"Server started on port {self.port}")
         threading.Thread(target=self._accept_clients, daemon=True).start()
 
@@ -63,6 +64,7 @@ class Server:
                             response = f"Account {account_id} balance set to {amount}."
                         else:
                             response = f"Account {account_id} does not exist."
+
                         client_socket.sendall(response.encode())
 
                     case ["GET", account_id]:
@@ -71,7 +73,33 @@ class Server:
                             response = f"Account {account_id} balance is {balance}."
                         else:
                             response = f"Account {account_id} does not exist."
+
                         client_socket.sendall(response.encode())
+                    
+                    case ["WITHDRAW", account_id, amount]:
+                        self.my_lock.acquire()
+                        if account_id in self.accounts:
+                            if self.accounts[account_id] >= int(amount):
+                                self.accounts[account_id] -= int(amount)
+                                response = f"Withdrew {amount} from account {account_id}. New balance is {self.accounts[account_id]}."
+                            else:
+                                response = f"Insufficient funds in account {account_id}."
+                        else:
+                            response = f"Account {account_id} does not exist."
+
+                        client_socket.sendall(response.encode())
+                        self.my_lock.release()
+                    
+                    case ["DEPOSIT", account_id, amount]:
+                        self.my_lock.acquire()
+                        if account_id in self.accounts:
+                            self.accounts[account_id] += int(amount)
+                            response = f"Deposited {amount} to account {account_id}. New balance is {self.accounts[account_id]}."
+                        else:
+                            response = f"Account {account_id} does not exist."
+                            
+                        client_socket.sendall(response.encode())
+                        self.my_lock.release()
 
                     case _:
                         response = "Invalid command."

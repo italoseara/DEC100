@@ -32,6 +32,8 @@ class App:
             print("[1] Create Account")
             print("[2] Set Account Balance")
             print("[3] Get Account Balance")
+            print("[4] Withdraw")
+            print("[5] Deposit")
             print("[0] Exit")
 
             choice = input("Select an option: ")
@@ -43,6 +45,10 @@ class App:
                     self.set_balance()
                 case '3':
                     self.get_balance()
+                case '4':
+                    self.withdraw()
+                case '5':
+                    self.deposit()
                 case '0':
                     self.clear_screen()
                     logging.info("Exiting application.")
@@ -83,6 +89,28 @@ class App:
         logging.info(f"Retrieving balance for account ID: {account_id}")
 
         response = self.send_command(f"GET {account_id}")
+        print(response)
+
+    def withdraw(self) -> None:
+        account_id = input("Enter account ID: ")
+        ammount_input = input("Enter amount to withdraw: ")
+
+        self.clear_screen()
+
+        logging.info(f"Withdrawing from account ID: {account_id}")
+
+        response = self.send_command(f"WITHDRAW {account_id} {ammount_input}")
+        print(response)
+    
+    def deposit(self) -> None:
+        account_id = input("Enter account ID: ")
+        amount_input = input("Enter amount to deposit: ")
+
+        self.clear_screen()
+
+        logging.info(f"Depositing to account ID: {account_id}")
+
+        response = self.send_command(f"DEPOSIT {account_id} {amount_input}")
         print(response)
 
     def clear_screen(self) -> None:
