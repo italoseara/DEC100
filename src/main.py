@@ -16,12 +16,15 @@ logging.basicConfig(level=logging.DEBUG,
 
 
 def main() -> None:
-    # Start the server in a separate thread
-    server = Server(port=25565)
+    # Pergunta ao usuário a porta que o servidor deve usar
+    port = input("Type the port number for the server to use (default: 25565): ") or '25565'
+    port = int(port)
+
+    server = Server(port=port)
     server_thread = threading.Thread(target=server.start)
     server_thread.start()
 
-    app = App()
+    app = App(server_host='localhost', server_port=port)
     app.run()
     server.stop()
 

@@ -6,27 +6,21 @@ from connection.client import Client
 
 
 class App:
-    def __init__(self) -> None:
+    def __init__(self, server_host: str = 'localhost', server_port: int = 25565) -> None:
         self.name = "BitUESC"
         self.version = self._get_commit_hash()
 
-        self.server = tuple()
+        self.server = (server_host, server_port)
 
     def run(self) -> None:
         self.clear_screen()
 
         print(f"Running {self.name} version {self.version}")
+        print()
         print("Welcome to BitUESC!")
         print()
 
-        host = input("Enter server host (default: localhost): ") or "localhost"
-        port_input = input("Enter server port (default: 25565): ") or "25565"
-        port = int(port_input)
-        self.server = (host, port)
-
-        logging.info(f"Configured to connect to server at {host}:{port}")
-
-        self.clear_screen()
+        logging.info(f"Client configured to connect to server at {self.server[0]}:{self.server[1]}")
 
         while True:
             print("[1] Create Account")

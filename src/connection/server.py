@@ -14,7 +14,7 @@ class Server:
 
         self.transactions = []     # store transactions before creating a block
         self.block_id = 0          # initial ID
-        self.block_file = "transactions_blocks.log"
+        self.block_file = "transactions.log"
 
         if os.path.exists(self.block_file): # clear the archive in each excecution. Idk if it's that way
             os.remove(self.block_file)
@@ -45,7 +45,7 @@ class Server:
             logging.info(f"Accepted connection from {addr}")
             threading.Thread(target=self._handle_client, args=(client_socket,), daemon=True).start()
 
-    def _create_block(self):
+    def _create_block(self) -> None:
         """Create a new transaction block and write it to the block file."""
 
         block = []
@@ -55,7 +55,7 @@ class Server:
             sign = "-" if t["type"] == "WITHDRAW" else "+"
             block.append(f"T {t['account']} {sign}{t['value']}")
         for acc, balance in self.accounts.items():
-            sign = "+" if balance >= 0 else ""
+            sign = "+" if balance >= 0 else "-"
             block.append(f"S {acc} {sign}{balance}")
 
         with open(self.block_file, "a") as f:
