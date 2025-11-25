@@ -9,6 +9,8 @@ class Server:
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.is_running = False
 
+        self.accounts = {}  # Dictionary to store account balances
+
     def start(self) -> None:
         """Start the server and begin listening for connections."""
         
@@ -41,6 +43,40 @@ class Server:
                 data = client_socket.recv(1024)
                 if not data:
                     break
+
                 logging.info(f"Received: {data.decode()}")
-                client_socket.sendall(data)  # Echo back the received data
+
+                response = None
+                match data.decode().split():
+                    case ["CREATE", account_id]:
+                        if account_id in self.accounts:
+                            response = f"Account {account_id} already exists."
+                        else:
+                            self.accounts[account_id] = 0
+                            response = f"Account {account_id} created with balance 0."
+
+                        client_socket.sendall(response.encode())
+
+                    case ["SET", account_id, amount]:
+                        if account_id in self.accounts:
+                            self.accounts[account_id] = int(amount)
+                            response = f"Account {account_id} balance set to {amount}."
+                        else:
+                            response = f"Account {account_id} does not exist."
+                        client_socket.sendall(response.encode())
+
+                    case ["GET", account_id]:
+                        if account_id in self.accounts:
+                            balance = self.accounts[account_id]
+                            response = f"Account {account_id} balance is {balance}."
+                        else:
+                            response = f"Account {account_id} does not exist."
+                        client_socket.sendall(response.encode())
+
+                    case _:
+                        response = "Invalid command."
+                        client_socket.sendall(response.encode())
+
+                logging.info(f"Response sent: {response}")
+
         logging.info("Client disconnected")

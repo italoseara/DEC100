@@ -4,6 +4,7 @@ import datetime
 import threading
 from connection.server import Server
 from connection.client import Client
+from bituesc.app import App
 
 
 os.makedirs('logs', exist_ok=True)
@@ -20,20 +21,11 @@ def main() -> None:
     server_thread = threading.Thread(target=server.start)
     server_thread.start()
 
-    # Create a client and connect to the server
-    client = Client(host='localhost', port=25565)
-    client.connect()
-
-    # Send a message from the client to the server
-    response = client.send_message("Hello, Server!")
-    logging.info(f"Client received response: {response}")
-
-    # Disconnect the client
-    client.disconnect()
-
-    # Stop the server
+    app = App()
+    app.run()
     server.stop()
-    server_thread.join()
+
+    logging.info("Application has exited.")
 
 
 if __name__ == "__main__":

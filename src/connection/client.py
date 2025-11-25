@@ -17,6 +17,7 @@ class Client:
     def send_message(self, message: str) -> str:
         """Send a message to the server and receive a response."""
 
+        logging.info(f"Sending: {message}")
         self.client_socket.sendall(message.encode())
         data = self.client_socket.recv(1024)
         logging.info(f"Received: {data.decode()}")
