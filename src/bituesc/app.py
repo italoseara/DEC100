@@ -29,6 +29,7 @@ class App:
             print("[3] Get Account Balance")
             print("[4] Withdraw")
             print("[5] Deposit")
+            print("[6] Mine Block")
             print("[0] Exit")
 
             choice = input("Select an option: ")
@@ -44,6 +45,8 @@ class App:
                     self.withdraw()
                 case "5":
                     self.deposit()
+                case "6":
+                    self.mine_block()
                 case "0":
                     self.clear_screen()
                     logging.info("Exiting application.")
@@ -155,6 +158,20 @@ class App:
             print(f"Deposited {amount_input} to account {response["data"]["account_id"]}. New balance is {response["data"]["balance"]}.")
         else:
             print(f"Error depositing amount: {response['error']['message']}")
+
+    def mine_block(self) -> None:
+        self.clear_screen()
+        logging.info("Requesting block mining")
+        response = self.send_request({
+            "action": "MINE_BLOCK",
+            "data": {}
+        })
+        if response.get("status") == "ok":
+            bid = response.get("data", {}).get("block_id")
+            bid_val = response.get("data", {}).get("id")
+            print(f"Block {bid} mined with id {bid_val}.")
+        else:
+            print(f"Error mining block: {response.get('error', {}).get('message')}")
 
     def clear_screen(self) -> None:
         """Clear the console screen."""

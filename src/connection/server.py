@@ -24,6 +24,8 @@ class Server:
         self.block_file = f"transactions_{node_id}.log"
         self.block_log_lock = threading.Lock()
         self.seen_txn_ids = set()
+        self.seen_block_ids = set()
+        self.block_ready = False  # becomes True when we have 6 transactions awaiting mining
 
         if os.path.exists(self.block_file):  # clear the archive in each excecution. Idk if it's that way
             os.remove(self.block_file)
@@ -56,29 +58,66 @@ class Server:
             logging.info(f"Accepted connection from {addr}")
             threading.Thread(target=self._handle_client, args=(client_socket,), daemon=True).start()
 
-    def _create_block(self) -> None:
-        """Create a new transaction block and write it to the block file."""
+    def _create_block(self) -> int:
+        """Mine current block (must have 6 transactions), append id + factors, persist and propagate."""
 
-        block = []
-        block.append(str(self.block_id))
+        if len(self.transactions) != 6:
+            raise RuntimeError("Block incomplete; cannot mine")
 
+        # Build block lines (without id/factors yet)
+        base_block = [str(self.block_id)]
         for t in self.transactions:
             sign = "-" if t["type"] == "WITHDRAW" else "+"
-            block.append(f"T {t['account']} {sign}{t['value']}")
+            base_block.append(f"T {t['account']} {sign}{t['value']}")
         for acc, balance in self.accounts.items():
             sign = "+" if balance >= 0 else "-"
-            block.append(f"S {acc} {sign}{balance}")
+            base_block.append(f"S {acc} {sign}{balance}")
 
+        # Compute id from bytes of the textual representation prior to id/factors lines
+        block_text_without_meta = "\n".join(base_block) + "\n"  # include trailing newline
+        block_bytes = block_text_without_meta.encode("utf-8")
+        block_id_value = self._compute_block_id(block_bytes)
+        prime_factors = self._prime_factors(block_id_value)
+        factor_line = ",".join(str(f) for f in prime_factors)
+
+        full_block = list(base_block)
+        full_block.append(str(block_id_value))
+        full_block.append(factor_line)
+
+        # Persist
         with self.block_log_lock:
             with open(self.block_file, "a") as f:
-                for line in block:
+                for line in full_block:
                     f.write(line + "\n")
                 f.write("\n")
 
-        logging.info(f"Block {self.block_id} created with transactions: {self.transactions}")
+        logging.info(f"Block {self.block_id} mined with id {block_id_value} factors {factor_line}")
 
+        # Mark mined
+        self.seen_block_ids.add(self.block_id)
+
+        # Prepare replication message
+        if self.successor:
+            msg = {
+                "type": "REPLICATE_BLOCK",
+                "origin_id": self.node_id,
+                "hop": 0,
+                "block_id": self.block_id,
+                "lines": full_block,
+                "id": block_id_value,
+                "factors": prime_factors,
+            }
+            try:
+                self._send_to_successor(msg)
+            except Exception as e:
+                logging.error(f"Failed to propagate block: {e}")
+
+        # Advance to next block
+        mined_bid = self.block_id
         self.block_id += 1
         self.transactions = []
+        self.block_ready = False
+        return block_id_value
 
     def _handle_client(self, client_socket: socket.socket) -> None:
         """Handle communication with a connected client."""
@@ -112,6 +151,11 @@ class Server:
                     self._handle_replication(msg)
                     # peer protocol replies with ACK
                     ack = {"type": "REPLICATE_ACK", "txn_id": msg.get("txn_id"), "node_id": self.node_id}
+                    client_socket.sendall((json.dumps(ack) + "\n").encode("utf-8"))
+                    continue
+                if msg.get("type") == "REPLICATE_BLOCK":
+                    self._handle_block_replication(msg)
+                    ack = {"type": "BLOCK_ACK", "block_id": msg.get("block_id"), "node_id": self.node_id}
                     client_socket.sendall((json.dumps(ack) + "\n").encode("utf-8"))
                     continue
 
@@ -197,35 +241,38 @@ class Server:
                     replicate_payload = None
                     self.lock.acquire()
                     try:
-                        if account_id not in self.accounts:
-                            resp = {
-                                "status": "error",
-                                "error": {
-                                    "code": "ACCOUNT_NOT_FOUND",
-                                    "message": f"Account {account_id} does not exist",
-                                },
-                            }
-                        elif self.accounts[account_id] < amount:
-                            resp = {
-                                "status": "error",
-                                "error": {
-                                    "code": "INSUFFICIENT_FUNDS",
-                                    "message": f"Insufficient funds in account {account_id}",
-                                },
-                            }
+                        if self.block_ready and len(self.transactions) == 6:
+                            resp = {"status": "error", "error": {"code": "BLOCK_PENDING", "message": "Block full awaiting mining."}}
                         else:
-                            self.accounts[account_id] -= amount
-                            resp = {
-                                "status": "ok",
-                                "data": {
-                                    "account_id": account_id, 
-                                    "balance": self.accounts[account_id]
-                                },
-                            }
-                            self.transactions.append({"account": account_id, "type": "WITHDRAW", "value": amount})
-                            replicate_payload = {"account": account_id, "type": "WITHDRAW", "value": amount}
-                            if len(self.transactions) == 6:
-                                self._create_block()
+                            if account_id not in self.accounts:
+                                resp = {
+                                    "status": "error",
+                                    "error": {
+                                        "code": "ACCOUNT_NOT_FOUND",
+                                        "message": f"Account {account_id} does not exist",
+                                    },
+                                }
+                            elif self.accounts[account_id] < amount:
+                                resp = {
+                                    "status": "error",
+                                    "error": {
+                                        "code": "INSUFFICIENT_FUNDS",
+                                        "message": f"Insufficient funds in account {account_id}",
+                                    },
+                                }
+                            else:
+                                self.accounts[account_id] -= amount
+                                resp = {
+                                    "status": "ok",
+                                    "data": {
+                                        "account_id": account_id, 
+                                        "balance": self.accounts[account_id]
+                                    },
+                                }
+                                self.transactions.append({"account": account_id, "type": "WITHDRAW", "value": amount})
+                                replicate_payload = {"account": account_id, "type": "WITHDRAW", "value": amount}
+                                if len(self.transactions) == 6:
+                                    self.block_ready = True
                     finally:
                         self.lock.release()
 
@@ -238,33 +285,52 @@ class Server:
                     replicate_payload = None
                     self.lock.acquire()
                     try:
-                        if account_id not in self.accounts:
-                            resp = {
-                                "status": "error",
-                                "error": {
-                                    "code": "ACCOUNT_NOT_FOUND",
-                                    "message": f"Account {account_id} does not exist",
-                                },
-                            }
+                        if self.block_ready and len(self.transactions) == 6:
+                            resp = {"status": "error", "error": {"code": "BLOCK_PENDING", "message": "Block full awaiting mining."}}
                         else:
-                            self.accounts[account_id] += amount
-                            resp = {
-                                "status": "ok",
-                                "data": {
-                                    "account_id": account_id, 
-                                    "balance": self.accounts[account_id]
-                                },
-                            }
-                            self.transactions.append({"account": account_id, "type": "DEPOSIT", "value": amount})
-                            replicate_payload = {"account": account_id, "type": "DEPOSIT", "value": amount}
-                            if len(self.transactions) == 6:
-                                self._create_block()
+                            if account_id not in self.accounts:
+                                resp = {
+                                    "status": "error",
+                                    "error": {
+                                        "code": "ACCOUNT_NOT_FOUND",
+                                        "message": f"Account {account_id} does not exist",
+                                    },
+                                }
+                            else:
+                                self.accounts[account_id] += amount
+                                resp = {
+                                    "status": "ok",
+                                    "data": {
+                                        "account_id": account_id, 
+                                        "balance": self.accounts[account_id]
+                                    },
+                                }
+                                self.transactions.append({"account": account_id, "type": "DEPOSIT", "value": amount})
+                                replicate_payload = {"account": account_id, "type": "DEPOSIT", "value": amount}
+                                if len(self.transactions) == 6:
+                                    self.block_ready = True
                     finally:
                         self.lock.release()
 
                     if replicate_payload:
                         self._replicate_local_txn(replicate_payload)
 
+                elif action == "MINE_BLOCK":
+                        # Attempt to mine current block
+                        self.lock.acquire()
+                        try:
+                            if len(self.transactions) != 6:
+                                resp = {"status": "error", "error": {"code": "BLOCK_INCOMPLETE", "message": "Block does not yet have 6 transactions."}}
+                            elif not self.block_ready:
+                                resp = {"status": "error", "error": {"code": "BLOCK_NOT_READY", "message": "Block not ready for mining."}}
+                            else:
+                                try:
+                                    mined_value = self._create_block()
+                                    resp = {"status": "ok", "data": {"block_id": self.block_id - 1, "id": mined_value}}
+                                except Exception as e:
+                                    resp = {"status": "error", "error": {"code": "MINING_FAILED", "message": str(e)}}
+                        finally:
+                            self.lock.release()
                 else:
                     resp = {
                         "status": "error", 
@@ -288,40 +354,39 @@ class Server:
         hop = int(msg.get("hop", 0))
         payload = msg.get("payload", {})
 
-        # Idempotence: if we've already processed this txn, ignore
-        if txn_id in self.seen_txn_ids:
-            logging.debug(f"Duplicate txn {txn_id} ignored")
-            return
-
         # Apply mutation locally
-        ttype = payload.get("type")
-        account = payload.get("account")
-        value = int(payload.get("value", 0))
-        self.lock.acquire()
-        try:
-            if ttype == "CREATE":
-                if account not in self.accounts:
-                    self.accounts[account] = 0
-            elif ttype == "SET":
-                self.accounts[account] = value
-            elif ttype == "DEPOSIT":
-                if account not in self.accounts:
-                    self.accounts[account] = 0
-                self.accounts[account] += value
-                self.transactions.append({"account": account, "type": "DEPOSIT", "value": value})
-            elif ttype == "WITHDRAW":
-                if account not in self.accounts:
-                    self.accounts[account] = 0
-                self.accounts[account] -= value
-                self.transactions.append({"account": account, "type": "WITHDRAW", "value": value})
+        if txn_id not in self.seen_txn_ids:
+            ttype = payload.get("type")
+            account = payload.get("account")
+            value = int(payload.get("value", 0))
+            self.lock.acquire()
+            try:
+                if self.block_ready and len(self.transactions) == 6:
+                    # Ignore further txns until block mined
+                    return
+                if ttype == "CREATE":
+                    if account not in self.accounts:
+                        self.accounts[account] = 0
+                elif ttype == "SET":
+                    self.accounts[account] = value
+                elif ttype == "DEPOSIT":
+                    if account not in self.accounts:
+                        self.accounts[account] = 0
+                    self.accounts[account] += value
+                    self.transactions.append({"account": account, "type": "DEPOSIT", "value": value})
+                elif ttype == "WITHDRAW":
+                    if account not in self.accounts:
+                        self.accounts[account] = 0
+                    self.accounts[account] -= value
+                    self.transactions.append({"account": account, "type": "WITHDRAW", "value": value})
 
-            if len(self.transactions) == 6:
-                self._create_block()
-        finally:
-            self.lock.release()
+                if len(self.transactions) == 6:
+                    self.block_ready = True
+            finally:
+                self.lock.release()
 
-        # Mark as seen only after successfully applying
-        self.seen_txn_ids.add(txn_id)
+            # Mark as seen only after successfully applying
+            self.seen_txn_ids.add(txn_id)
 
         # Forward along the ring
         if self.successor:
@@ -339,6 +404,72 @@ class Server:
                 except Exception as e:
                     logging.error(f"Failed to forward to successor: {e}")
 
+    def _handle_block_replication(self, msg: dict) -> None:
+        """Verify and replicate a mined block across the ring."""
+        block_id = msg.get("block_id")
+        origin_id = msg.get("origin_id")
+        hop = int(msg.get("hop", 0))
+        lines = msg.get("lines", [])
+        advertised_id = int(msg.get("id"))
+        advertised_factors = msg.get("factors", [])
+
+        if block_id in self.seen_block_ids:
+            return
+
+        # Verify structure: last two lines are id and factor list
+        if len(lines) < 2:
+            logging.warning("Received malformed block (too few lines)")
+            return
+        try:
+            id_line = lines[-2]
+            factors_line = lines[-1]
+            if int(id_line) != advertised_id:
+                logging.warning("Block id mismatch")
+                return
+            received_factors = [int(x) for x in factors_line.split(",") if x]
+        except Exception:
+            logging.warning("Malformed id/factors lines")
+            return
+
+        # Recompute id from pre-meta lines
+        content_without_meta = "\n".join(lines[:-2]) + "\n"
+        recomputed_id = self._compute_block_id(content_without_meta.encode("utf-8"))
+        if recomputed_id != advertised_id:
+            logging.warning("Block verification failed: id mismatch")
+            return
+
+        # Verify prime factorization correctness (product equals id)
+        prod = 1
+        for f in received_factors:
+            prod *= f
+        if prod != advertised_id:
+            logging.warning("Block verification failed: factors product mismatch")
+            return
+
+        # Accept block
+        with self.block_log_lock:
+            with open(self.block_file, "a") as f:
+                for line in lines:
+                    f.write(line + "\n")
+                f.write("\n")
+        logging.info(f"Accepted mined block {block_id} id {advertised_id}")
+        self.seen_block_ids.add(block_id)
+
+        # Reset current pending block if we were mid-building same one
+        if len(self.transactions) == 6:
+            self.transactions = []
+            self.block_ready = False
+            self.block_id = max(self.block_id, block_id + 1)
+
+        # Forward
+        if self.successor and not (self.node_id == origin_id and hop >= 3):
+            fwd = dict(msg)
+            fwd["hop"] = hop + 1
+            try:
+                self._send_to_successor(fwd)
+            except Exception as e:
+                logging.error(f"Failed to forward block: {e}")
+
     def _replicate_local_txn(self, payload: dict) -> None:
         """Inject a local transaction into the ring (entry node)."""
 
@@ -350,6 +481,9 @@ class Server:
             "hop": 0,
             "payload": payload,
         }
+
+        self.seen_txn_ids.add(txn_id)
+        
         # Apply locally immediately to keep UX responsive; don't pre-mark as seen
         self._handle_replication(msg)
 
@@ -357,7 +491,7 @@ class Server:
         if not self.successor:
             return
 
-        logging.debug(f"Forwarding txn {msg.get('txn_id')} to successor {self.successor[0]}:{self.successor[1]}")
+        logging.debug(f"Forwarding txn to successor {self.successor[0]}:{self.successor[1]}")
 
         host, port = self.successor
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -371,3 +505,33 @@ class Server:
         except Exception:
             pass
         s.close()
+
+    @staticmethod
+    def _compute_block_id(block_bytes: bytes) -> int:
+        """Compute block id by multiplying all bytes (0-255 mapped to 1-256) modulo 65535."""
+        idlim = 65535
+        mult = 1
+        for b in block_bytes:
+            v = b + 1  # map 0..255 to 1..256
+            mult *= v
+            if mult > idlim:
+                mult = mult % idlim
+        return mult
+
+    @staticmethod
+    def _prime_factors(n: int) -> list:
+        """Return prime factors of n (with multiplicity) in ascending traversal order."""
+        factors = []
+        # Handle 2
+        while n % 2 == 0:
+            factors.append(2)
+            n //= 2
+        p = 3
+        while p * p <= n:
+            while n % p == 0:
+                factors.append(p)
+                n //= p
+            p += 2
+        if n > 1:
+            factors.append(n)
+        return factors
