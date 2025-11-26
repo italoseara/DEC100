@@ -73,7 +73,7 @@ class App:
         })
         
         if response["status"] == "ok":
-            print(f"Account {response["data"]["account_id"]} created successfully.")
+            print(f"Account {response['data']['account_id']} created successfully.")
         else:
             print(f"Error creating account: {response['error']['message']}")
 
@@ -94,7 +94,7 @@ class App:
         })
 
         if response["status"] == "ok":
-            print(f"Balance for account {response["data"]["account_id"]} set to {response["data"]["balance"]}.")
+            print(f"Balance for account {response['data']['account_id']} set to {response['data']['balance']}.")
         else:
             print(f"Error setting balance: {response['error']['message']}")
 
@@ -113,7 +113,7 @@ class App:
         })
         
         if response["status"] == "ok":
-            print(f"Account {response["data"]["account_id"]} has balance {response["data"]["balance"]}.")
+            print(f"Account {response['data']['account_id']} has balance {response['data']['balance']}.")
         else:
             print(f"Error retrieving balance: {response['error']['message']}")
 
@@ -134,7 +134,7 @@ class App:
         })
 
         if response["status"] == "ok":
-            print(f"Withdrew {ammount_input} from account {response["data"]["account_id"]}. New balance is {response["data"]["balance"]}.")
+            print(f"Withdrew {ammount_input} from account {response['data']['account_id']}. New balance is {response['data']['balance']}.")
         else:
             print(f"Error withdrawing amount: {response['error']['message']}")
 
@@ -155,7 +155,7 @@ class App:
         })
         
         if response["status"] == "ok":
-            print(f"Deposited {amount_input} to account {response["data"]["account_id"]}. New balance is {response["data"]["balance"]}.")
+            print(f"Deposited {amount_input} to account {response['data']['account_id']}. New balance is {response['data']['balance']}.")
         else:
             print(f"Error depositing amount: {response['error']['message']}")
 
