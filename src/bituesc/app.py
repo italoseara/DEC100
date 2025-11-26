@@ -63,7 +63,7 @@ class App:
         logging.info(f"Creating account with ID: {account_id}")
 
         response = self.send_request({
-            "action": "create_account", 
+            "action": "CREATE_ACCOUNT", 
             "data": {
                 "account_id": account_id
             }
@@ -83,7 +83,7 @@ class App:
         logging.info(f"Changing balance for account ID: {account_id} to {amount_input}")
 
         response = self.send_request({
-            "action": "set_balance", 
+            "action": "SET_BALANCE", 
             "data": {
                 "account_id": account_id, 
                 "amount": int(amount_input)
@@ -103,7 +103,7 @@ class App:
         logging.info(f"Retrieving balance for account ID: {account_id}")
 
         response = self.send_request({
-            "action": "get_balance", 
+            "action": "GET_BALANCE", 
             "data": {
                 "account_id": account_id
             }
@@ -123,7 +123,7 @@ class App:
         logging.info(f"Withdrawing from account ID: {account_id}")
 
         response = self.send_request({
-            "action": "withdraw", 
+            "action": "WITHDRAW", 
             "data": {
                 "account_id": account_id, 
                 "amount": int(ammount_input)
@@ -141,10 +141,10 @@ class App:
 
         self.clear_screen()
 
-        logging.info(f"Depositing to account ID: {account_id}")
+        logging.info(f"Depositing {amount_input} to account ID: {account_id}")
 
         response = self.send_request({
-            "action": "deposit", 
+            "action": "DEPOSIT", 
             "data": {
                 "account_id": account_id, 
                 "amount": int(amount_input)

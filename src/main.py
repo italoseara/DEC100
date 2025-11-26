@@ -16,11 +16,13 @@ logging.basicConfig(level=logging.DEBUG,
 
 
 def main() -> None:
-    # Pergunta ao usuário a porta que o servidor deve usar
-    port = input("Type the port number for the server to use (default: 25565): ") or '25565'
-    port = int(port)
+    # Config simples para rodar em anel local
+    port = int(input("Server port (default 25565): ") or '25565')
+    node_id = int(input("Node ID [0-3] (default 0): ") or '0')
+    succ_host = input("Successor host (default localhost): ") or 'localhost'
+    succ_port = int(input("Successor port (default 25565): ") or str(port))
 
-    server = Server(port=port)
+    server = Server(port=port, node_id=node_id, successor_host=succ_host, successor_port=succ_port)
     server_thread = threading.Thread(target=server.start)
     server_thread.start()
 
