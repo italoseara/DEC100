@@ -2,6 +2,7 @@ import socket
 import logging
 import threading
 import os
+import json
 
 
 class Server:
@@ -12,17 +13,16 @@ class Server:
 
         self.accounts = {}  # Dictionary to store account balances
 
-        self.transactions = []     # store transactions before creating a block
-        self.block_id = 0          # initial ID
+        self.transactions = []  # store transactions before creating a block
+        self.block_id = 0  # initial ID
         self.block_file = "transactions.log"
 
-        if os.path.exists(self.block_file): # clear the archive in each excecution. Idk if it's that way
+        if os.path.exists(self.block_file):  # clear the archive in each excecution. Idk if it's that way
             os.remove(self.block_file)
-
 
     def start(self) -> None:
         """Start the server and begin listening for connections."""
-        
+
         self.server_socket.bind(("", self.port))
         self.server_socket.listen(5)
         self.is_running = True
@@ -32,14 +32,14 @@ class Server:
 
     def stop(self) -> None:
         """Stop the server."""
-        
+
         self.is_running = False
         self.server_socket.close()
         logging.info("Server stopped")
 
     def _accept_clients(self) -> None:
         """Thread pool to accept incoming client connections."""
-        
+
         while self.is_running:
             client_socket, addr = self.server_socket.accept()
             logging.info(f"Accepted connection from {addr}")
@@ -70,85 +70,178 @@ class Server:
 
     def _handle_client(self, client_socket: socket.socket) -> None:
         """Handle communication with a connected client."""
-        
+
         with client_socket:
             while True:
-                data = client_socket.recv(1024)
+                data = client_socket.recv(4096)
                 if not data:
                     break
 
-                logging.info(f"Received: {data.decode()}")
+                text = data.decode("utf-8").strip()
+                logging.info(f"Received: {text}")
 
-                response = None
-                match data.decode().split():
-                    case ["CREATE", account_id]:
-                        if account_id in self.accounts:
-                            response = f"Account {account_id} already exists."
+                try:
+                    msg = json.loads(text)
+                except json.JSONDecodeError:
+                    resp = {
+                        "status": "error", 
+                        "error": {
+                            "code": "INVALID_JSON", 
+                            "message": "Could not parse request"
+                        }
+                    }
+
+                    client_socket.sendall((json.dumps(resp) + "\n").encode("utf-8"))
+                    logging.info("Response sent: INVALID_JSON")
+                    continue
+
+                action = msg.get("action")
+                payload = msg.get("data", {})
+
+                resp: dict
+                if action == "create_account":
+                    account_id = payload.get("account_id")
+                    if not account_id:
+                        resp = {
+                            "status": "error",
+                            "error": {
+                                "code": "INVALID_PARAMS", 
+                                "message": "account_id required"
+                            },
+                        }
+                    elif account_id in self.accounts:
+                        resp = {
+                            "status": "error",
+                            "error": {
+                                "code": "ACCOUNT_EXISTS", 
+                                "message": f"Account {account_id} already exists"
+                            },
+                        }
+                    else:
+                        self.accounts[account_id] = 0
+                        resp = {
+                            "status": "ok", 
+                            "data": {
+                                "account_id": account_id, 
+                                "balance": 0
+                            }
+                        }
+
+                elif action == "set_balance":
+                    account_id = payload.get("account_id")
+                    amount = payload.get("amount")
+                    if account_id not in self.accounts:
+                        resp = {
+                            "status": "error",
+                            "error": {
+                                "code": "ACCOUNT_NOT_FOUND", 
+                                "message": f"Account {account_id} does not exist"
+                            },
+                        }
+                    else:
+                        self.accounts[account_id] = int(amount)
+                        resp = {
+                            "status": "ok",
+                            "data": {
+                                "account_id": account_id, 
+                                "balance": self.accounts[account_id]
+                            },
+                        }
+
+                elif action == "get_balance":
+                    account_id = payload.get("account_id")
+                    if account_id not in self.accounts:
+                        resp = {
+                            "status": "error",
+                            "error": {
+                                "code": "ACCOUNT_NOT_FOUND", 
+                                "message": f"Account {account_id} does not exist"
+                            },
+                        }
+                    else:
+                        resp = {
+                            "status": "ok",
+                            "data": {
+                                "account_id": account_id, 
+                                "balance": self.accounts[account_id]
+                            },
+                        }
+
+                elif action == "withdraw":
+                    account_id = payload.get("account_id")
+                    amount = int(payload.get("amount", 0))
+                    self.my_lock.acquire()
+                    try:
+                        if account_id not in self.accounts:
+                            resp = {
+                                "status": "error",
+                                "error": {
+                                    "code": "ACCOUNT_NOT_FOUND",
+                                    "message": f"Account {account_id} does not exist",
+                                },
+                            }
+                        elif self.accounts[account_id] < amount:
+                            resp = {
+                                "status": "error",
+                                "error": {
+                                    "code": "INSUFFICIENT_FUNDS",
+                                    "message": f"Insufficient funds in account {account_id}",
+                                },
+                            }
                         else:
-                            self.accounts[account_id] = 0
-                            response = f"Account {account_id} created with balance 0."
-
-                        client_socket.sendall(response.encode())
-
-                    case ["SET", account_id, amount]:
-                        if account_id in self.accounts:
-                            self.accounts[account_id] = int(amount)
-                            response = f"Account {account_id} balance set to {amount}."
-                        else:
-                            response = f"Account {account_id} does not exist."
-
-                        client_socket.sendall(response.encode())
-
-                    case ["GET", account_id]:
-                        if account_id in self.accounts:
-                            balance = self.accounts[account_id]
-                            response = f"Account {account_id} balance is {balance}."
-                        else:
-                            response = f"Account {account_id} does not exist."
-
-                        client_socket.sendall(response.encode())
-                    
-                    case ["WITHDRAW", account_id, amount]:
-                        self.my_lock.acquire()
-                        if account_id in self.accounts:
-                            if self.accounts[account_id] >= int(amount):
-                                self.accounts[account_id] -= int(amount)
-                                response = f"Withdrew {amount} from account {account_id}. New balance is {self.accounts[account_id]}."
-
-                                self.transactions.append({"account": account_id, "type": "WITHDRAW", "value": int(amount)})
-
-                                if len(self.transactions) == 6:
-                                    self._create_block()
-
-                            else:
-                                response = f"Insufficient funds in account {account_id}."
-                        else:
-                            response = f"Account {account_id} does not exist."
-
-                        client_socket.sendall(response.encode())
-                        self.my_lock.release()
-                    
-                    case ["DEPOSIT", account_id, amount]:
-                        self.my_lock.acquire()
-                        if account_id in self.accounts:
-                            self.accounts[account_id] += int(amount)
-                            response = f"Deposited {amount} to account {account_id}. New balance is {self.accounts[account_id]}."
-
-                            self.transactions.append({"account": account_id, "type": "DEPOSIT", "value": int(amount)})
-
+                            self.accounts[account_id] -= amount
+                            resp = {
+                                "status": "ok",
+                                "data": {
+                                    "account_id": account_id, 
+                                    "balance": self.accounts[account_id]
+                                },
+                            }
+                            self.transactions.append({"account": account_id, "type": "WITHDRAW", "value": amount})
                             if len(self.transactions) == 6:
                                 self._create_block()
-
-                        else:
-                            response = f"Account {account_id} does not exist."
-                            
-                        client_socket.sendall(response.encode())
+                    finally:
                         self.my_lock.release()
 
-                    case _:
-                        response = "Invalid command."
-                        client_socket.sendall(response.encode())
+                elif action == "deposit":
+                    account_id = payload.get("account_id")
+                    amount = int(payload.get("amount", 0))
+                    self.my_lock.acquire()
+                    try:
+                        if account_id not in self.accounts:
+                            resp = {
+                                "status": "error",
+                                "error": {
+                                    "code": "ACCOUNT_NOT_FOUND",
+                                    "message": f"Account {account_id} does not exist",
+                                },
+                            }
+                        else:
+                            self.accounts[account_id] += amount
+                            resp = {
+                                "status": "ok",
+                                "data": {
+                                    "account_id": account_id, 
+                                    "balance": self.accounts[account_id]
+                                },
+                            }
+                            self.transactions.append({"account": account_id, "type": "DEPOSIT", "value": amount})
+                            if len(self.transactions) == 6:
+                                self._create_block()
+                    finally:
+                        self.my_lock.release()
 
-                logging.info(f"Response sent: {response}")
+                else:
+                    resp = {
+                        "status": "error", 
+                        "error": {
+                            "code": "INVALID_ACTION", 
+                            "message": "Unknown action"
+                        }
+                    }
+
+                out = json.dumps(resp) + "\n"
+                client_socket.sendall(out.encode("utf-8"))
+                logging.info(f"Response sent: {resp}")
 
         logging.info("Client disconnected")
