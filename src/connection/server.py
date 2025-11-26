@@ -25,7 +25,7 @@ class Server:
         self.block_log_lock = threading.Lock()
         self.seen_txn_ids = set()
         self.seen_block_ids = set()
-        self.block_ready = False  # becomes True when we have 6 transactions awaiting mining
+        self.block_ready = False  # True when we have 6 transactions
 
         if os.path.exists(self.block_file):  # clear the archive in each excecution. Idk if it's that way
             os.remove(self.block_file)
@@ -64,7 +64,7 @@ class Server:
         if len(self.transactions) != 6:
             raise RuntimeError("Block incomplete; cannot mine")
 
-        # Build block lines (without id/factors yet)
+        # Build block lines, without id and factors
         base_block = [str(self.block_id)]
         for t in self.transactions:
             sign = "-" if t["type"] == "WITHDRAW" else "+"
@@ -73,7 +73,7 @@ class Server:
             sign = "+" if balance >= 0 else "-"
             base_block.append(f"S {acc} {sign}{balance}")
 
-        # Compute id from bytes of the textual representation prior to id/factors lines
+        # Compute ID from the block's text, except ID and Factors
         block_text_without_meta = "\n".join(base_block) + "\n"  # include trailing newline
         block_bytes = block_text_without_meta.encode("utf-8")
         block_id_value = self._compute_block_id(block_bytes)
@@ -84,7 +84,6 @@ class Server:
         full_block.append(str(block_id_value))
         full_block.append(factor_line)
 
-        # Persist
         with self.block_log_lock:
             with open(self.block_file, "a") as f:
                 for line in full_block:
@@ -93,10 +92,10 @@ class Server:
 
         logging.info(f"Block {self.block_id} mined with id {block_id_value} factors {factor_line}")
 
-        # Mark mined
+        # Mark the mined block
         self.seen_block_ids.add(self.block_id)
 
-        # Prepare replication message
+        # Adjust replication message
         if self.successor:
             msg = {
                 "type": "REPLICATE_BLOCK",
@@ -112,7 +111,7 @@ class Server:
             except Exception as e:
                 logging.error(f"Failed to propagate block: {e}")
 
-        # Advance to next block
+        # Go to next block
         mined_bid = self.block_id
         self.block_id += 1
         self.transactions = []
@@ -146,10 +145,10 @@ class Server:
                     logging.debug("Response sent: INVALID_JSON")
                     continue
 
-                # Peer messages use `type` field; client messages use `action`
+                # Peers use "type"; clients use "action"
                 if msg.get("type") == "REPLICATE_TXN":
                     self._handle_replication(msg)
-                    # peer protocol replies with ACK
+                    # send ACK to peer
                     ack = {"type": "REPLICATE_ACK", "txn_id": msg.get("txn_id"), "node_id": self.node_id}
                     client_socket.sendall((json.dumps(ack) + "\n").encode("utf-8"))
                     continue
@@ -310,7 +309,7 @@ class Server:
                                 if len(self.transactions) == 6:
                                     self.block_ready = True
                     finally:
-                        self.lock.release()
+                        self.lock.release() # Release the Thread lock
 
                     if replicate_payload:
                         self._replicate_local_txn(replicate_payload)
@@ -362,7 +361,7 @@ class Server:
             self.lock.acquire()
             try:
                 if self.block_ready and len(self.transactions) == 6:
-                    # Ignore further txns until block mined
+                    # Ignore further txns until block is mined
                     return
                 if ttype == "CREATE":
                     if account not in self.accounts:
@@ -385,10 +384,10 @@ class Server:
             finally:
                 self.lock.release()
 
-            # Mark as seen only after successfully applying
+            # Mark as seen only after successfully replicate
             self.seen_txn_ids.add(txn_id)
 
-        # Forward along the ring
+        # Forward to the next node
         if self.successor:
             next_msg = {
                 "type": "REPLICATE_TXN",
@@ -416,7 +415,7 @@ class Server:
         if block_id in self.seen_block_ids:
             return
 
-        # Verify structure: last two lines are id and factor list
+        # Verify structure: last two lines must be id and factor list
         if len(lines) < 2:
             logging.warning("Received malformed block (too few lines)")
             return
@@ -431,14 +430,14 @@ class Server:
             logging.warning("Malformed id/factors lines")
             return
 
-        # Recompute id from pre-meta lines
+        # Recompute id from block content
         content_without_meta = "\n".join(lines[:-2]) + "\n"
         recomputed_id = self._compute_block_id(content_without_meta.encode("utf-8"))
         if recomputed_id != advertised_id:
             logging.warning("Block verification failed: id mismatch")
             return
 
-        # Verify prime factorization correctness (product equals id)
+        # Verify if prime factorization is correct (product == id)
         prod = 1
         for f in received_factors:
             prod *= f
@@ -455,7 +454,7 @@ class Server:
         logging.info(f"Accepted mined block {block_id} id {advertised_id}")
         self.seen_block_ids.add(block_id)
 
-        # Reset current pending block if we were mid-building same one
+        # Reset the current block if we were building it
         if len(self.transactions) == 6:
             self.transactions = []
             self.block_ready = False
@@ -484,7 +483,7 @@ class Server:
 
         self.seen_txn_ids.add(txn_id)
         
-        # Apply locally immediately to keep UX responsive; don't pre-mark as seen
+        # Apply locally right now for quick response; don't mark as seen yet
         self._handle_replication(msg)
 
     def _send_to_successor(self, msg: dict) -> None:
@@ -522,7 +521,7 @@ class Server:
     def _prime_factors(n: int) -> list:
         """Return prime factors of n (with multiplicity) in ascending traversal order."""
         factors = []
-        # Handle 2
+        # Extract all factors of 2
         while n % 2 == 0:
             factors.append(2)
             n //= 2
