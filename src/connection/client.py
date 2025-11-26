@@ -19,12 +19,12 @@ class Client:
         """Send a JSON message (NDJSON line) to the server and return JSON response."""
 
         message = json.dumps(payload) + "\n"
-        logging.info(f"Sending: {message.strip()}")
+        logging.debug(f"Sending: {message.strip()}")
         self.client_socket.sendall(message.encode("utf-8"))
 
         data = self.client_socket.recv(4096)
         text = data.decode("utf-8").strip()
-        logging.info(f"Received: {text}")
+        logging.debug(f"Received: {text}")
         try:
             return json.loads(text)
         except json.JSONDecodeError:

@@ -1,17 +1,19 @@
-import socket
-import logging
-import threading
 import os
 import json
 import uuid
+import socket
+import logging
+import threading
 
 
 class Server:
     def __init__(self, port=25565, node_id=0, successor_host=None, successor_port=None) -> None:
         self.port = port
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        
         self.node_id = int(node_id)
         self.successor = (successor_host, successor_port) if successor_host and successor_port else None
+
         self.is_running = False
         self.lock = threading.Lock()
 
@@ -88,7 +90,7 @@ class Server:
                     break
 
                 text = data.decode("utf-8").strip()
-                logging.info(f"Received: {text}")
+                logging.debug(f"Received: {text}")
 
                 try:
                     msg = json.loads(text)
@@ -102,7 +104,7 @@ class Server:
                     }
 
                     client_socket.sendall((json.dumps(resp) + "\n").encode("utf-8"))
-                    logging.info("Response sent: INVALID_JSON")
+                    logging.debug("Response sent: INVALID_JSON")
                     continue
 
                 # Peer messages use `type` field; client messages use `action`
@@ -274,7 +276,7 @@ class Server:
 
                 out = json.dumps(resp) + "\n"
                 client_socket.sendall(out.encode("utf-8"))
-                logging.info(f"Response sent: {resp}")
+                logging.debug(f"Response sent: {resp}")
 
         logging.info("Client disconnected")
 
@@ -354,6 +356,8 @@ class Server:
     def _send_to_successor(self, msg: dict) -> None:
         if not self.successor:
             return
+
+        logging.debug(f"Forwarding txn {msg.get('txn_id')} to successor {self.successor[0]}:{self.successor[1]}")
 
         host, port = self.successor
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
