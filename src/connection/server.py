@@ -33,7 +33,7 @@ class Server:
     def start(self) -> None:
         """Start the server and begin listening for connections."""
 
-        self.server_socket.bind(("0.0.0.0", self.port))
+        self.server_socket.bind(("", self.port))
         self.server_socket.listen(5)
         self.is_running = True
 
